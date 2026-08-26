@@ -1,0 +1,53 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: obot-provider
+    main: .
+    # Nested so each archive matches the ProviderRegistries directory layout Obot scans:
+    # auth-providers/<name>.yaml next to <name>/bin/obot-provider. Dropping an extracted
+    # archive straight into a registry directory is then enough to make it discoverable.
+    binary: authentik-auth-provider/bin/obot-provider
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "authentik-auth-provider_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: auth-providers/authentik-auth-provider.yaml
+        dst: auth-providers/authentik-auth-provider.yaml
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  github:
+    owner: dcode
+    name: obot-authentik-auth-provider
