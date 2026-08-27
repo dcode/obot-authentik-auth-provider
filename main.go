@@ -196,7 +196,7 @@ func run() error {
 	mux.HandleFunc("/{$}", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(fmt.Appendf(nil, "http://%s", addr))
 	})
-	mux.HandleFunc("/obot-get-state", state.ObotGetState(oauthProxy))
+	mux.HandleFunc("/obot-get-state", getState(oauthProxy))
 	mux.HandleFunc("/obot-get-user-info", srv.getUserInfo)
 	mux.HandleFunc("/obot-list-auth-groups", authcommon.ListGroupsHandler(providerKind, srv.fetchGroupPage))
 	mux.HandleFunc("/obot-get-auth-groups", authcommon.GetGroupsHandler(providerKind, srv.fetchGroupsByIDs))
@@ -252,6 +252,79 @@ func (s *server) listUserGroups(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(groups); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode groups: %v", err), http.StatusInternalServerError)
 	}
+}
+
+// getState wraps auth-providers-common's state.ObotGetState, overriding the response's "user"
+// field to be human-readable instead of Authentik's raw numeric sub.
+//
+// Per obot-platform/providers's docs/auth-providers.md, "/obot-get-state" is what Obot calls on
+// every request to identify the caller, and its response's "user" field ("the identifier for the
+// user") is what Obot persists as the account's username/display name -- confirmed live by
+// decrypting a real obot_access_token cookie via this provider's own "/obot-get-state" endpoint
+// and cross-referencing Obot's Postgres "identities" table, where "provider_username" held the
+// literal numeric Authentik user ID.
+//
+// That numeric value is unavoidable for the *session's* underlying "sub" claim: sub_mode =
+// "user_id" in authentik-obot.tf is required so the group-directory endpoints below can resolve
+// group membership via Authentik's "/api/v3/core/users/{sub}/". oauth2-proxy's ID-token "User"
+// claim always mirrors "sub" for OIDC-type providers -- this fork's provider setup
+// (providers.go's newProviderDataFromConfig) has no option that changes which claim populates
+// SessionState.User, so it is always "sub", unconfigurably.
+//
+// That's session-internal, though, and separate from what this handler reports in the response
+// body: state.GetSerializableState reads the already-established, unmodified session (still
+// backed by the real signed ID/access tokens Authentik issued, "sub" claim and all) to build
+// accessToken/idToken/groups, and only *after* that is done does this handler substitute a
+// friendlier value into the response's "user" field. Nothing here touches the signed tokens
+// themselves or what any other endpoint (e.g. /obot-list-user-auth-groups) reads out of them, so
+// group-directory lookups are unaffected.
+func getState(oauthProxy *oauth2proxy.OAuthProxy) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var sr state.SerializableRequest
+		if err := json.NewDecoder(r.Body).Decode(&sr); err != nil {
+			http.Error(w, fmt.Sprintf("failed to decode request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		reqObj, err := http.NewRequestWithContext(r.Context(), sr.Method, sr.URL, nil)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to create request object: %v", err), http.StatusBadRequest)
+			return
+		}
+		reqObj.Header = sr.Header
+
+		ss, err := state.GetSerializableState(oauthProxy, reqObj)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to get state: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		ss.User = humanReadableUser(ss)
+
+		// state.SerializableState.AccessToken is required by the documented contract (Obot uses
+		// it to call back into /obot-get-user-info etc. with the caller's own token) -- this
+		// isn't an accidental secret leak, it's the whole point of this endpoint, matching what
+		// the equivalent, unwrapped state.ObotGetState call already did before this handler
+		// existed.
+		if err := json.NewEncoder(w).Encode(ss); err != nil { //nolint:gosec // see comment above
+			http.Error(w, fmt.Sprintf("failed to encode state: %v", err), http.StatusInternalServerError)
+		}
+	}
+}
+
+// humanReadableUser picks the value getState should report as "user": PreferredUsername (backed
+// by Authentik's "preferred_username" claim, which the default "profile" scope mapping always
+// sets to request.user.username -- see docs/configuration.md) when present, falling back to
+// Email, and only falling back to the session's raw (numeric, for Authentik) User value if
+// neither is available.
+func humanReadableUser(ss state.SerializableState) string {
+	if ss.PreferredUsername != "" {
+		return ss.PreferredUsername
+	}
+	if ss.Email != "" {
+		return ss.Email
+	}
+	return ss.User
 }
 
 func (s *server) getUserInfo(w http.ResponseWriter, r *http.Request) {
