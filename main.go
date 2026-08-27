@@ -36,6 +36,14 @@ const providerKind = "authentik"
 // local builds.
 var version = "dev"
 
+// normalizeIssuerURL returns issuer with exactly one trailing slash, matching Authentik's own
+// convention for the "issuer" claim in its OIDC discovery document. See the comment where this
+// is called in run() for why matching that convention (rather than stripping the slash) is what
+// go-oidc's issuer-equality check requires.
+func normalizeIssuerURL(issuer string) string {
+	return strings.TrimRight(issuer, "/") + "/"
+}
+
 type Options struct {
 	ClientID     string `env:"OBOT_AUTHENTIK_AUTH_PROVIDER_CLIENT_ID"`
 	ClientSecret string `env:"OBOT_AUTHENTIK_AUTH_PROVIDER_CLIENT_SECRET"`
@@ -81,7 +89,16 @@ func run() error {
 		return fmt.Errorf("failed to load options: %w", err)
 	}
 
-	opts.IssuerURL = strings.TrimSuffix(opts.IssuerURL, "/")
+	// Authentik's OIDC discovery document always returns its "issuer" claim with a trailing
+	// slash (e.g. "https://auth.example.com/application/o/obot/"), regardless of how the
+	// issuer is configured on our side. go-oidc's NewProvider does a strict string comparison
+	// between the issuer URL it was given and the issuer claim returned by discovery, with no
+	// normalization of its own -- so any mismatch here (extra slash, missing slash, double
+	// slash) breaks OIDC discovery with "issuer did not match the issuer returned by
+	// provider". Normalize to Authentik's own convention (exactly one trailing slash) instead
+	// of stripping it, so this matches regardless of whether the configured value has zero,
+	// one, or more trailing slashes.
+	opts.IssuerURL = normalizeIssuerURL(opts.IssuerURL)
 
 	refreshDuration, err := time.ParseDuration(opts.AuthTokenRefreshDuration)
 	if err != nil {
