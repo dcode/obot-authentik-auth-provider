@@ -8,7 +8,11 @@
    - **Subject mode**: **Based on the User's ID**. This is required, not a preference -- the
      provider's group-directory endpoints look up a user's memberships by calling Authentik's
      `/api/v3/core/users/{id}/` with the OIDC `sub` claim as `{id}`, which only lines up when the
-     subject is the numeric/UUID user ID rather than a hashed or username-based subject.
+     subject is the numeric/UUID user ID rather than a hashed or username-based subject. This
+     doesn't mean Obot's UI shows raw numeric IDs as usernames -- as of v0.1.3, the provider
+     separately surfaces a human-readable identifier (preferred username, falling back to email)
+     for display, while group lookups keep reading the numeric `sub` server-side. If you're
+     running an older release, upgrade rather than working around this.
    - **Scopes**: at minimum `openid`, `email`, `profile`, `offline_access`, plus a scope that
      maps to a `groups` claim (see below).
 2. Create an **Application** using that provider, and note the provider's **Client ID** and
@@ -29,6 +33,20 @@ need a mapping that adds a `groups` claim. If you don't already have one:
 If you already have a similar mapping under a different claim name for another application (this
 repo's own cluster reuses one named `k8s_groups` for Netbox/RustFS), you don't need a second one
 -- just point `OBOT_AUTHENTIK_AUTH_PROVIDER_GROUPS_CLAIM` at the existing claim name instead.
+
+### Roles and permissions
+
+Authentik group membership (via the `groups` claim above) is what backs Obot's access-control
+UI -- which groups can see/use which agents, MCP servers, etc. It is **not** what grants the
+Owner or Admin role inside Obot itself. Confirmed live: a user in an Authentik group that a
+deployment treats as "the admins group" still logs in with Obot's default role, identical to a
+user in no groups at all. Obot elevates specific people to Owner/Admin through its own
+`--auth-owner-emails`/`--auth-admin-emails` server flags (`OBOT_SERVER_AUTH_OWNER_EMAILS`/
+`OBOT_SERVER_AUTH_ADMIN_EMAILS` per `obot server --help`) -- a plain email allowlist, unrelated to
+this provider or to Authentik groups. These are also pflag string-slice flags, the same type as
+`--provider-registries` above, which is confirmed dead as an env var in this codebase -- treat
+the env var form of these with the same suspicion and prefer setting them as literal CLI args
+unless you've verified otherwise on your Obot version.
 
 ## Authentik: service account for the group directory
 
