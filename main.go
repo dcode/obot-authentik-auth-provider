@@ -286,7 +286,7 @@ func getState(oauthProxy *oauth2proxy.OAuthProxy) http.HandlerFunc {
 			return
 		}
 
-		reqObj, err := http.NewRequest(sr.Method, sr.URL, nil)
+		reqObj, err := http.NewRequestWithContext(r.Context(), sr.Method, sr.URL, nil)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to create request object: %v", err), http.StatusBadRequest)
 			return
@@ -301,7 +301,12 @@ func getState(oauthProxy *oauth2proxy.OAuthProxy) http.HandlerFunc {
 
 		ss.User = humanReadableUser(ss)
 
-		if err := json.NewEncoder(w).Encode(ss); err != nil {
+		// state.SerializableState.AccessToken is required by the documented contract (Obot uses
+		// it to call back into /obot-get-user-info etc. with the caller's own token) -- this
+		// isn't an accidental secret leak, it's the whole point of this endpoint, matching what
+		// the equivalent, unwrapped state.ObotGetState call already did before this handler
+		// existed.
+		if err := json.NewEncoder(w).Encode(ss); err != nil { //nolint:gosec // see comment above
 			http.Error(w, fmt.Sprintf("failed to encode state: %v", err), http.StatusInternalServerError)
 		}
 	}
