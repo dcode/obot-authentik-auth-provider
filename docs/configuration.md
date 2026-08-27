@@ -30,9 +30,9 @@ need a mapping that adds a `groups` claim. If you don't already have one:
    - **Expression**: `return {"groups": [group.name for group in user.ak_groups.all()]}`
 2. Add that scope mapping to the OAuth2 Provider's **Scopes**.
 
-If you already have a similar mapping under a different claim name for another application (this
-repo's own cluster reuses one named `k8s_groups` for Netbox/RustFS), you don't need a second one
--- just point `OBOT_AUTHENTIK_AUTH_PROVIDER_GROUPS_CLAIM` at the existing claim name instead.
+If you already have a similar mapping under a different claim name for another application, you
+don't need a second one -- just point `OBOT_AUTHENTIK_AUTH_PROVIDER_GROUPS_CLAIM` at the existing
+claim name instead.
 
 ### Roles and permissions
 
