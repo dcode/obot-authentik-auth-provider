@@ -44,6 +44,19 @@ func normalizeIssuerURL(issuer string) string {
 	return strings.TrimRight(issuer, "/") + "/"
 }
 
+// buildRedirectURL returns the absolute callback URL oauth2-proxy should register with the
+// upstream IdP as its "redirect_uri". oauth2-proxy only auto-appends its callback path
+// (proxyPrefix + "/callback") onto RawRedirectURL when that value's URL.Path is empty -- a bare
+// "https://host/" (note the trailing slash) already has a non-empty Path ("/"), so oauth2-proxy
+// treats it as a complete, final redirect URI and uses it verbatim. That was exactly the bug
+// found live: Authentik's OAuth2 provider only allows the "/oauth2/callback" redirect URI
+// (strict matching), so it rejected the bare-root value with a "Redirect URI Error". Building
+// the full path ourselves, tied to the actual configured proxyPrefix rather than a hardcoded
+// literal, avoids relying on oauth2-proxy's empty-path auto-append behavior at all.
+func buildRedirectURL(serverURL, proxyPrefix string) string {
+	return strings.TrimRight(serverURL, "/") + proxyPrefix + "/callback"
+}
+
 type Options struct {
 	ClientID     string `env:"OBOT_AUTHENTIK_AUTH_PROVIDER_CLIENT_ID"`
 	ClientSecret string `env:"OBOT_AUTHENTIK_AUTH_PROVIDER_CLIENT_SECRET"`
@@ -141,7 +154,7 @@ func run() error {
 	oauthProxyOpts.Cookie.Name = "obot_access_token"
 	oauthProxyOpts.Cookie.Secret = string(cookieSecret)
 	oauthProxyOpts.Cookie.Secure = strings.HasPrefix(opts.ObotServerURL, "https://")
-	oauthProxyOpts.RawRedirectURL = opts.ObotServerURL + "/"
+	oauthProxyOpts.RawRedirectURL = buildRedirectURL(opts.ObotServerURL, oauthProxyOpts.ProxyPrefix)
 	if opts.AuthEmailDomains != "" {
 		emailDomains := strings.Split(opts.AuthEmailDomains, ",")
 		for i := range emailDomains {
